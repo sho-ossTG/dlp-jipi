@@ -71,6 +71,21 @@ function sendJsonError(res, statusCode, error, detail, extraHeaders = {}) {
   res.end(JSON.stringify({ error, detail }));
 }
 
+function logRequestError({ event, error, detail, correlationId, requestId, method, path }) {
+  console.error(JSON.stringify({
+    server: "C",
+    event,
+    error,
+    detail,
+    correlationId,
+    requestId,
+    method,
+    path,
+    worker_id: WORKER_ID,
+    ts: new Date().toISOString(),
+  }));
+}
+
 async function checkServerB(serverBUrl) {
   if (!serverBUrl) {
     return { ok: false, ms: 0, error: "SERVER_B_URL not set" };
@@ -502,6 +517,7 @@ async function handler(req, res) {
   const inputUrl = String(reqUrl.searchParams.get("url") || "").trim();
   const runServerBCheck = pathname === "/" && reqUrl.searchParams.get("check") === "1";
   const correlationId = String(req.headers["x-correlation-id"] || "").trim() || randomUUID();
+  const requestId = String(req.headers["x-request-id"] || "").trim() || correlationId;
 
   // GET /health — JSON status for Server B to poll
   if (pathname === "/health") {
@@ -558,15 +574,15 @@ async function handler(req, res) {
   // GET /resolve?url=X  or  GET /?url=X — resolve a video URL
   if (pathname === "/resolve" || pathname === "/api/resolve" || pathname === "/") {
     if (req.method !== "GET") {
-      console.error(JSON.stringify({
-        message: `Server C rejected the resolve request because method ${String(req.method || "unknown")} is not allowed; only GET is supported.`,
-        server: "C",
-        correlationId,
-        ts: new Date().toISOString(),
+      logRequestError({
         event: "method_not_allowed",
-        detail: String(req.method || "unknown"),
-        worker_id: WORKER_ID,
-      }));
+        error: "method_not_allowed",
+        detail: `Only GET is allowed for /api/resolve; received ${String(req.method || "unknown")}.`,
+        correlationId,
+        requestId,
+        method: String(req.method || "unknown"),
+        path: pathname,
+      });
       sendJsonError(res, 405, "method_not_allowed", "Only GET is allowed for /api/resolve.", { Allow: "GET" });
       return;
     }
@@ -579,30 +595,30 @@ async function handler(req, res) {
     }));
 
     if (!inputUrl) {
-      console.error(JSON.stringify({
-        message: "Server C could not resolve the stream because the required url query parameter was missing.",
-        server: "C",
-        correlationId,
-        ts: new Date().toISOString(),
+      logRequestError({
         event: "missing_url_param",
-        detail: "Missing url parameter",
-        worker_id: WORKER_ID,
-      }));
+        error: "missing_url_parameter",
+        detail: "The url query parameter is required.",
+        correlationId,
+        requestId,
+        method: String(req.method || "unknown"),
+        path: pathname,
+      });
       res.statusCode = 400;
       sendJsonError(res, 400, "missing_url_parameter", "The url query parameter is required.");
       return;
     }
 
     if (!isHttpUrl(inputUrl)) {
-      console.error(JSON.stringify({
-        message: `Server C rejected the resolve request because the provided URL is not a valid http(s) address: ${inputUrl.slice(0, 120)}.`,
-        server: "C",
-        correlationId,
-        ts: new Date().toISOString(),
+      logRequestError({
         event: "invalid_url",
-        detail: inputUrl.slice(0, 120),
-        worker_id: WORKER_ID,
-      }));
+        error: "invalid_url",
+        detail: `Expected http(s) URL; received ${inputUrl.slice(0, 120)}.`,
+        correlationId,
+        requestId,
+        method: String(req.method || "unknown"),
+        path: pathname,
+      });
       res.statusCode = 400;
       sendJsonError(res, 400, "invalid_url", "The url query parameter must be a valid http(s) URL.");
       return;
@@ -633,15 +649,15 @@ async function handler(req, res) {
         resolveErrors.push({ timestamp: new Date().toISOString(), url: String(inputUrl).slice(0, 60), error: errText });
         if (resolveErrors.length > 10) resolveErrors.shift();
 
-        console.error(JSON.stringify({
-          message: `Server C could not produce a playable stream URL because yt-dlp returned an empty or invalid URL for input ${inputUrl.slice(0, 120)}.`,
-          server: "C",
-          correlationId,
-          ts: new Date().toISOString(),
+        logRequestError({
           event: "yt_dlp_empty_url",
-          detail: inputUrl.slice(0, 120),
-          worker_id: WORKER_ID,
-        }));
+          error: "yt_dlp_empty_url",
+          detail: `yt-dlp returned an empty or invalid URL for input ${inputUrl.slice(0, 120)}.`,
+          correlationId,
+          requestId,
+          method: String(req.method || "unknown"),
+          path: pathname,
+        });
         res.statusCode = 502;
         sendJsonError(res, 502, "yt_dlp_empty_url", "yt-dlp returned an empty or invalid URL.");
         return;
@@ -667,15 +683,15 @@ async function handler(req, res) {
       });
       if (resolveErrors.length > 10) resolveErrors.shift();
 
-      console.error(JSON.stringify({
-        message: `Server C failed to resolve the stream because yt-dlp returned an execution error for input ${inputUrl.slice(0, 120)}: ${errText.slice(0, 200)}.`,
-        server: "C",
-        correlationId,
-        ts: new Date().toISOString(),
+      logRequestError({
         event: "yt_dlp_failed",
+        error: "yt_dlp_failed",
         detail: `${inputUrl.slice(0, 120)} | ${errText.slice(0, 300)}`,
-        worker_id: WORKER_ID,
-      }));
+        correlationId,
+        requestId,
+        method: String(req.method || "unknown"),
+        path: pathname,
+      });
       res.statusCode = 500;
       sendJsonError(res, 500, "yt_dlp_failed", errText);
     }
@@ -683,15 +699,15 @@ async function handler(req, res) {
   }
 
   // 404
-  console.error(JSON.stringify({
-    message: `Server C received a request for an unknown path and returned 404 Not Found: ${pathname}.`,
-    server: "C",
-    correlationId,
-    ts: new Date().toISOString(),
+  logRequestError({
     event: "route_not_found",
+    error: "not_found",
+    detail: `Unknown route: ${pathname}`,
+    correlationId,
+    requestId,
+    method: String(req.method || "unknown"),
     path: pathname,
-    worker_id: WORKER_ID,
-  }));
+  });
   res.statusCode = 404;
   res.setHeader("Content-Type", "application/json");
   res.end(JSON.stringify({ error: "Not found", worker_id: WORKER_ID }));

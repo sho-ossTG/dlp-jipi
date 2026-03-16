@@ -39,6 +39,14 @@ async function invoke(handler, { method = "GET", url = "/api/resolve", headers =
   });
 }
 
+function parseLoggedEntry(callArgs) {
+  try {
+    return JSON.parse(String(callArgs[0] || ""));
+  } catch {
+    return null;
+  }
+}
+
 test("non-GET /api/resolve returns 405 with strict error envelope", async () => {
   const handler = loadFreshHandler();
   const response = await invoke(handler, { method: "POST", url: "/api/resolve" });
@@ -80,4 +88,73 @@ test("GET /api/resolve with invalid url returns 400 with strict error envelope",
     error: "invalid_url",
     detail: "The url query parameter must be a valid http(s) URL.",
   });
+});
+
+test("method-not-allowed failures log structured machine fields", async () => {
+  const handler = loadFreshHandler();
+  const originalConsoleError = console.error;
+  const errorCalls = [];
+  console.error = (...args) => {
+    errorCalls.push(args);
+  };
+
+  try {
+    await invoke(handler, {
+      method: "POST",
+      url: "/api/resolve",
+      headers: {
+        "x-correlation-id": "corr-c1-method",
+        "x-request-id": "req-c1-method",
+      },
+    });
+  } finally {
+    console.error = originalConsoleError;
+  }
+
+  const methodLog = errorCalls
+    .map(parseLoggedEntry)
+    .find((entry) => entry && entry.event === "method_not_allowed");
+
+  assert.ok(methodLog, "expected a method_not_allowed log entry");
+  assert.equal(methodLog.server, "C");
+  assert.equal(methodLog.error, "method_not_allowed");
+  assert.equal(methodLog.detail, "Only GET is allowed for /api/resolve; received POST.");
+  assert.equal(methodLog.correlationId, "corr-c1-method");
+  assert.equal(methodLog.requestId, "req-c1-method");
+  assert.equal(methodLog.method, "POST");
+  assert.equal(methodLog.path, "/api/resolve");
+});
+
+test("missing-url failures log structured machine fields", async () => {
+  const handler = loadFreshHandler();
+  const originalConsoleError = console.error;
+  const errorCalls = [];
+  console.error = (...args) => {
+    errorCalls.push(args);
+  };
+
+  try {
+    await invoke(handler, {
+      method: "GET",
+      url: "/api/resolve",
+      headers: {
+        "x-correlation-id": "corr-c1-missing",
+      },
+    });
+  } finally {
+    console.error = originalConsoleError;
+  }
+
+  const missingUrlLog = errorCalls
+    .map(parseLoggedEntry)
+    .find((entry) => entry && entry.event === "missing_url_param");
+
+  assert.ok(missingUrlLog, "expected a missing_url_param log entry");
+  assert.equal(missingUrlLog.server, "C");
+  assert.equal(missingUrlLog.error, "missing_url_parameter");
+  assert.equal(missingUrlLog.detail, "The url query parameter is required.");
+  assert.equal(missingUrlLog.correlationId, "corr-c1-missing");
+  assert.equal(missingUrlLog.requestId, "corr-c1-missing");
+  assert.equal(missingUrlLog.method, "GET");
+  assert.equal(missingUrlLog.path, "/api/resolve");
 });
