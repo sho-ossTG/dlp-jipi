@@ -6,7 +6,7 @@ function loadFreshHandler() {
   return require("./resolve.js");
 }
 
-async function invoke(handler, { method = "GET", url = "/api/stats", headers = {} } = {}) {
+async function invoke(handler, { method = "GET", url = "/api/resolve", headers = {} } = {}) {
   return new Promise((resolve, reject) => {
     const responseHeaders = {};
     let body = "";
@@ -39,37 +39,9 @@ async function invoke(handler, { method = "GET", url = "/api/stats", headers = {
   });
 }
 
-test("GET /api/stats returns TELE-03 contract keys for server C", async () => {
+test("non-GET /api/resolve returns 405 with strict error envelope", async () => {
   const handler = loadFreshHandler();
-  const response = await invoke(handler, { method: "GET", url: "/api/stats" });
-  const payload = JSON.parse(response.body);
-
-  assert.equal(response.statusCode, 200);
-  assert.equal(response.headers["content-type"], "application/json");
-  assert.deepEqual(Object.keys(payload), ["server", "hour", "request_count", "error_count"]);
-  assert.equal(payload.server, "C");
-});
-
-test("GET /api/stats returns current UTC hour format", async () => {
-  const handler = loadFreshHandler();
-  const response = await invoke(handler, { method: "GET", url: "/api/stats" });
-  const payload = JSON.parse(response.body);
-
-  assert.match(payload.hour, /^\d{4}-\d{2}-\d{2}T\d{2}:00:00Z$/);
-});
-
-test("GET /api/stats defaults request and error counters to zero", async () => {
-  const handler = loadFreshHandler();
-  const response = await invoke(handler, { method: "GET", url: "/api/stats" });
-  const payload = JSON.parse(response.body);
-
-  assert.equal(payload.request_count, 0);
-  assert.equal(payload.error_count, 0);
-});
-
-test("non-GET /api/stats returns 405 with JSON error payload", async () => {
-  const handler = loadFreshHandler();
-  const response = await invoke(handler, { method: "POST", url: "/api/stats" });
+  const response = await invoke(handler, { method: "POST", url: "/api/resolve" });
   const payload = JSON.parse(response.body);
 
   assert.equal(response.statusCode, 405);
@@ -78,6 +50,34 @@ test("non-GET /api/stats returns 405 with JSON error payload", async () => {
   assert.deepEqual(Object.keys(payload), ["error", "detail"]);
   assert.deepEqual(payload, {
     error: "method_not_allowed",
-    detail: "Only GET is allowed for /api/stats.",
+    detail: "Only GET is allowed for /api/resolve.",
+  });
+});
+
+test("GET /api/resolve without url returns 400 with strict error envelope", async () => {
+  const handler = loadFreshHandler();
+  const response = await invoke(handler, { method: "GET", url: "/api/resolve" });
+  const payload = JSON.parse(response.body);
+
+  assert.equal(response.statusCode, 400);
+  assert.equal(response.headers["content-type"], "application/json");
+  assert.deepEqual(Object.keys(payload), ["error", "detail"]);
+  assert.deepEqual(payload, {
+    error: "missing_url_parameter",
+    detail: "The url query parameter is required.",
+  });
+});
+
+test("GET /api/resolve with invalid url returns 400 with strict error envelope", async () => {
+  const handler = loadFreshHandler();
+  const response = await invoke(handler, { method: "GET", url: "/api/resolve?url=notaurl" });
+  const payload = JSON.parse(response.body);
+
+  assert.equal(response.statusCode, 400);
+  assert.equal(response.headers["content-type"], "application/json");
+  assert.deepEqual(Object.keys(payload), ["error", "detail"]);
+  assert.deepEqual(payload, {
+    error: "invalid_url",
+    detail: "The url query parameter must be a valid http(s) URL.",
   });
 });

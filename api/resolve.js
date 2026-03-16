@@ -62,6 +62,15 @@ function maskUrl(url) {
   }
 }
 
+function sendJsonError(res, statusCode, error, detail, extraHeaders = {}) {
+  res.statusCode = statusCode;
+  for (const [headerName, headerValue] of Object.entries(extraHeaders)) {
+    res.setHeader(headerName, headerValue);
+  }
+  res.setHeader("Content-Type", "application/json");
+  res.end(JSON.stringify({ error, detail }));
+}
+
 async function checkServerB(serverBUrl) {
   if (!serverBUrl) {
     return { ok: false, ms: 0, error: "SERVER_B_URL not set" };
@@ -512,10 +521,7 @@ async function handler(req, res) {
 
   if (pathname === "/api/stats") {
     if (req.method !== "GET") {
-      res.statusCode = 405;
-      res.setHeader("Allow", "GET");
-      res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify({ error: "Method Not Allowed" }));
+      sendJsonError(res, 405, "method_not_allowed", "Only GET is allowed for /api/stats.", { Allow: "GET" });
       return;
     }
 
@@ -561,9 +567,7 @@ async function handler(req, res) {
         detail: String(req.method || "unknown"),
         worker_id: WORKER_ID,
       }));
-      res.statusCode = 405;
-      res.setHeader("Allow", "GET");
-      res.end("Method Not Allowed");
+      sendJsonError(res, 405, "method_not_allowed", "Only GET is allowed for /api/resolve.", { Allow: "GET" });
       return;
     }
 
@@ -585,8 +589,7 @@ async function handler(req, res) {
         worker_id: WORKER_ID,
       }));
       res.statusCode = 400;
-      res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify({ error: "Missing url parameter", worker_id: WORKER_ID }));
+      sendJsonError(res, 400, "missing_url_parameter", "The url query parameter is required.");
       return;
     }
 
@@ -601,8 +604,7 @@ async function handler(req, res) {
         worker_id: WORKER_ID,
       }));
       res.statusCode = 400;
-      res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify({ error: "Invalid url; expected http(s) URL", worker_id: WORKER_ID }));
+      sendJsonError(res, 400, "invalid_url", "The url query parameter must be a valid http(s) URL.");
       return;
     }
 
@@ -641,8 +643,7 @@ async function handler(req, res) {
           worker_id: WORKER_ID,
         }));
         res.statusCode = 502;
-        res.setHeader("Content-Type", "application/json");
-        res.end(JSON.stringify({ error: "yt-dlp returned empty or invalid url", worker_id: WORKER_ID }));
+        sendJsonError(res, 502, "yt_dlp_empty_url", "yt-dlp returned an empty or invalid URL.");
         return;
       }
 
@@ -676,12 +677,7 @@ async function handler(req, res) {
         worker_id: WORKER_ID,
       }));
       res.statusCode = 500;
-      res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify({
-        error: "yt-dlp failed",
-        detail: errText,
-        worker_id: WORKER_ID,
-      }));
+      sendJsonError(res, 500, "yt_dlp_failed", errText);
     }
     return;
   }
