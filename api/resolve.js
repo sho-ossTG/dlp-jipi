@@ -109,6 +109,40 @@ function sendLoggedJsonError({
   sendJsonError(res, statusCode, error, responseDetail || detail, allow ? { Allow: allow } : undefined);
 }
 
+function getResolveValidationFailure({ method, inputUrl }) {
+  if (method !== "GET") {
+    return {
+      statusCode: 405,
+      event: "method_not_allowed",
+      error: "method_not_allowed",
+      detail: `Only GET is allowed for /api/resolve; received ${method}.`,
+      responseDetail: "Only GET is allowed for /api/resolve.",
+      allow: "GET",
+    };
+  }
+
+  if (!inputUrl) {
+    return {
+      statusCode: 400,
+      event: "missing_url_param",
+      error: "missing_url_parameter",
+      detail: "The url query parameter is required.",
+    };
+  }
+
+  if (!isHttpUrl(inputUrl)) {
+    return {
+      statusCode: 400,
+      event: "invalid_url",
+      error: "invalid_url",
+      detail: `Expected http(s) URL; received ${inputUrl.slice(0, 120)}.`,
+      responseDetail: "The url query parameter must be a valid http(s) URL.",
+    };
+  }
+
+  return null;
+}
+
 async function checkServerB(serverBUrl) {
   if (!serverBUrl) {
     return { ok: false, ms: 0, error: "SERVER_B_URL not set" };
@@ -530,6 +564,7 @@ async function handler(req, res) {
   const pathname = reqUrl.pathname;
   const inputUrl = String(reqUrl.searchParams.get("url") || "").trim();
   const runServerBCheck = pathname === "/" && reqUrl.searchParams.get("check") === "1";
+  const method = String(req.method || "unknown");
   const correlationId = String(req.headers["x-correlation-id"] || "").trim() || randomUUID();
   const requestId = String(req.headers["x-request-id"] || "").trim() || correlationId;
 
@@ -587,19 +622,15 @@ async function handler(req, res) {
 
   // GET /resolve?url=X  or  GET /?url=X — resolve a video URL
   if (pathname === "/resolve" || pathname === "/api/resolve" || pathname === "/") {
-    if (req.method !== "GET") {
+    const validationFailure = getResolveValidationFailure({ method, inputUrl });
+    if (validationFailure) {
       sendLoggedJsonError({
         res,
-        statusCode: 405,
-        event: "method_not_allowed",
-        error: "method_not_allowed",
-        detail: `Only GET is allowed for /api/resolve; received ${String(req.method || "unknown")}.`,
-        responseDetail: "Only GET is allowed for /api/resolve.",
+        ...validationFailure,
         correlationId,
         requestId,
-        method: String(req.method || "unknown"),
+        method,
         path: pathname,
-        allow: "GET",
       });
       return;
     }
@@ -610,37 +641,6 @@ async function handler(req, res) {
       worker_id: WORKER_ID,
       url: inputUrl.slice(0, 80),
     }));
-
-    if (!inputUrl) {
-      sendLoggedJsonError({
-        res,
-        statusCode: 400,
-        event: "missing_url_param",
-        error: "missing_url_parameter",
-        detail: "The url query parameter is required.",
-        correlationId,
-        requestId,
-        method: String(req.method || "unknown"),
-        path: pathname,
-      });
-      return;
-    }
-
-    if (!isHttpUrl(inputUrl)) {
-      sendLoggedJsonError({
-        res,
-        statusCode: 400,
-        event: "invalid_url",
-        error: "invalid_url",
-        detail: `Expected http(s) URL; received ${inputUrl.slice(0, 120)}.`,
-        responseDetail: "The url query parameter must be a valid http(s) URL.",
-        correlationId,
-        requestId,
-        method: String(req.method || "unknown"),
-        path: pathname,
-      });
-      return;
-    }
 
     totalRequests++;
     await incrementHourlyRecord(1, 0);
@@ -669,7 +669,7 @@ async function handler(req, res) {
           detail: `yt-dlp returned an empty or invalid URL for input ${inputUrl.slice(0, 120)}.`,
           correlationId,
           requestId,
-          method: String(req.method || "unknown"),
+          method,
           path: pathname,
         });
         res.statusCode = 502;
@@ -693,12 +693,12 @@ async function handler(req, res) {
       logRequestError({
         event: "yt_dlp_failed",
         error: "yt_dlp_failed",
-        detail: `${inputUrl.slice(0, 120)} | ${errText.slice(0, 300)}`,
-        correlationId,
-        requestId,
-        method: String(req.method || "unknown"),
-        path: pathname,
-      });
+          detail: `${inputUrl.slice(0, 120)} | ${errText.slice(0, 300)}`,
+          correlationId,
+          requestId,
+          method,
+          path: pathname,
+        });
       res.statusCode = 500;
       sendJsonError(res, 500, "yt_dlp_failed", errText);
     }
@@ -712,7 +712,7 @@ async function handler(req, res) {
     detail: `Unknown route: ${pathname}`,
     correlationId,
     requestId,
-    method: String(req.method || "unknown"),
+    method,
     path: pathname,
   });
   res.statusCode = 404;
