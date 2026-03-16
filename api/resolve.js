@@ -20,11 +20,9 @@ let statsHourRequestBaseline = 0;
 let statsHourErrorBaseline = 0;
 
 let lastResolve     = null;  // { timestamp, ok, durationMs }
-let resolveErrors   = [];    // last 10 failures, oldest first
 
 // resolveState: "idle" | "working" | "degraded"
 let resolveState     = "idle";
-let lastResolveError = null;
 
 // Self-test cache (30s TTL — avoids spawning yt-dlp on every /health poll)
 let selfTestCache  = null;
@@ -360,15 +358,6 @@ async function getCurrentHourStats() {
   return getCurrentHourStatsFromMemory();
 }
 
-function getResolveRuntimeStats() {
-  return {
-    totalRequests,
-    errorCount,
-    resolveState,
-    lastResolve
-  };
-}
-
 // ─── Status page (human-readable) ───────────────────────────────────────────
 
 function renderStatusPage(test) {
@@ -645,10 +634,6 @@ async function handler(req, res) {
         lastResolve = { timestamp: new Date().toISOString(), ok: false, durationMs };
         resolveState = "degraded";
         const errText = "yt-dlp returned empty or invalid url";
-        lastResolveError = errText;
-        resolveErrors.push({ timestamp: new Date().toISOString(), url: String(inputUrl).slice(0, 60), error: errText });
-        if (resolveErrors.length > 10) resolveErrors.shift();
-
         logRequestError({
           event: "yt_dlp_empty_url",
           error: "yt_dlp_empty_url",
@@ -674,14 +659,7 @@ async function handler(req, res) {
       await incrementHourlyRecord(0, 1);
       const errText = String(e && e.message ? e.message : e).slice(0, 1200);
       lastResolve = { timestamp: new Date().toISOString(), ok: false, durationMs };
-      lastResolveError = errText;
       resolveState = "degraded";
-      resolveErrors.push({
-        timestamp: new Date().toISOString(),
-        url: String(inputUrl).slice(0, 60),
-        error: errText.slice(0, 300),
-      });
-      if (resolveErrors.length > 10) resolveErrors.shift();
 
       logRequestError({
         event: "yt_dlp_failed",
@@ -714,4 +692,3 @@ async function handler(req, res) {
 }
 
 module.exports = handler;
-module.exports.getResolveRuntimeStats = getResolveRuntimeStats;
