@@ -84,6 +84,30 @@ function logRequestError({ event, error, detail, correlationId, requestId, metho
   }));
 }
 
+function sendLoggedJsonError({
+  res,
+  statusCode,
+  event,
+  error,
+  detail,
+  correlationId,
+  requestId,
+  method,
+  path,
+  allow,
+}) {
+  logRequestError({
+    event,
+    error,
+    detail,
+    correlationId,
+    requestId,
+    method,
+    path,
+  });
+  sendJsonError(res, statusCode, error, detail, allow ? { Allow: allow } : undefined);
+}
+
 async function checkServerB(serverBUrl) {
   if (!serverBUrl) {
     return { ok: false, ms: 0, error: "SERVER_B_URL not set" };
@@ -563,7 +587,9 @@ async function handler(req, res) {
   // GET /resolve?url=X  or  GET /?url=X — resolve a video URL
   if (pathname === "/resolve" || pathname === "/api/resolve" || pathname === "/") {
     if (req.method !== "GET") {
-      logRequestError({
+      sendLoggedJsonError({
+        res,
+        statusCode: 405,
         event: "method_not_allowed",
         error: "method_not_allowed",
         detail: `Only GET is allowed for /api/resolve; received ${String(req.method || "unknown")}.`,
@@ -571,8 +597,8 @@ async function handler(req, res) {
         requestId,
         method: String(req.method || "unknown"),
         path: pathname,
+        allow: "GET",
       });
-      sendJsonError(res, 405, "method_not_allowed", "Only GET is allowed for /api/resolve.", { Allow: "GET" });
       return;
     }
 
@@ -584,7 +610,9 @@ async function handler(req, res) {
     }));
 
     if (!inputUrl) {
-      logRequestError({
+      sendLoggedJsonError({
+        res,
+        statusCode: 400,
         event: "missing_url_param",
         error: "missing_url_parameter",
         detail: "The url query parameter is required.",
@@ -593,13 +621,13 @@ async function handler(req, res) {
         method: String(req.method || "unknown"),
         path: pathname,
       });
-      res.statusCode = 400;
-      sendJsonError(res, 400, "missing_url_parameter", "The url query parameter is required.");
       return;
     }
 
     if (!isHttpUrl(inputUrl)) {
-      logRequestError({
+      sendLoggedJsonError({
+        res,
+        statusCode: 400,
         event: "invalid_url",
         error: "invalid_url",
         detail: `Expected http(s) URL; received ${inputUrl.slice(0, 120)}.`,
@@ -608,8 +636,6 @@ async function handler(req, res) {
         method: String(req.method || "unknown"),
         path: pathname,
       });
-      res.statusCode = 400;
-      sendJsonError(res, 400, "invalid_url", "The url query parameter must be a valid http(s) URL.");
       return;
     }
 
