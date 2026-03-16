@@ -134,7 +134,7 @@ function runYtDlp(inputUrl) {
         "-g",
         inputUrl,
       ],
-      { timeout: 57000, maxBuffer: 1024 * 1024 },
+      { timeout: 57000, maxBuffer: 1024 * 1024 }, // Locked timeout chain: C yt-dlp 57s < B worker fetch 58s < D forward 65s < A per-attempt 65s
       (err, stdout, stderr) => {
         if (err) {
           reject(new Error(String(stderr || err.message || err).trim().slice(0, 1200)));
