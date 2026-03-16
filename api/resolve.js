@@ -90,6 +90,7 @@ function sendLoggedJsonError({
   event,
   error,
   detail,
+  responseDetail,
   correlationId,
   requestId,
   method,
@@ -105,7 +106,7 @@ function sendLoggedJsonError({
     method,
     path,
   });
-  sendJsonError(res, statusCode, error, detail, allow ? { Allow: allow } : undefined);
+  sendJsonError(res, statusCode, error, responseDetail || detail, allow ? { Allow: allow } : undefined);
 }
 
 async function checkServerB(serverBUrl) {
@@ -593,6 +594,7 @@ async function handler(req, res) {
         event: "method_not_allowed",
         error: "method_not_allowed",
         detail: `Only GET is allowed for /api/resolve; received ${String(req.method || "unknown")}.`,
+        responseDetail: "Only GET is allowed for /api/resolve.",
         correlationId,
         requestId,
         method: String(req.method || "unknown"),
@@ -631,6 +633,7 @@ async function handler(req, res) {
         event: "invalid_url",
         error: "invalid_url",
         detail: `Expected http(s) URL; received ${inputUrl.slice(0, 120)}.`,
+        responseDetail: "The url query parameter must be a valid http(s) URL.",
         correlationId,
         requestId,
         method: String(req.method || "unknown"),
