@@ -6,6 +6,22 @@ const BINARY = path.join(process.cwd(), "bin", "dlp-jipi");
 const WORKER_ID = process.env.WORKER_ID || "worker";
 const TURSO_DATABASE_URL = String(process.env.TURSO_DATABASE_URL || "").trim();
 const TURSO_AUTH_TOKEN = String(process.env.TURSO_AUTH_TOKEN || "").trim();
+const YTDLP_ATTEMPT_TIMEOUT_MS = 18000;
+const YTDLP_MAX_ERROR_DETAIL = 1200;
+const YTDLP_FORMAT_PROFILES = [
+  {
+    name: "mp4_avc_aac",
+    selector: "b[ext=mp4][vcodec^=avc1][acodec^=mp4a]/b[ext=mp4][vcodec^=avc1][acodec!=none]/b[ext=mp4][acodec^=mp4a]/b[ext=mp4]"
+  },
+  {
+    name: "mp4_progressive",
+    selector: "b[ext=mp4]/best[ext=mp4]"
+  },
+  {
+    name: "hls_fallback",
+    selector: "b[protocol^=m3u8]/best[protocol^=m3u8]"
+  }
+];
 
 // ─── Session state (reset on each cold start) ────────────────────────────────
 
@@ -178,7 +194,7 @@ async function checkServerB(serverBUrl) {
 
 // ─── Core functions ──────────────────────────────────────────────────────────
 
-function runYtDlp(inputUrl) {
+function runYtDlpWithProfile(inputUrl, profile) {
   return new Promise((resolve, reject) => {
     execFile(
       BINARY,
@@ -187,22 +203,81 @@ function runYtDlp(inputUrl) {
         "--no-warnings",
         "--add-header",
         "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "-f", "bv*+ba/b",
+        "-f", profile.selector,
         "--output", "jipi.%(ext)s",
         "-g",
         inputUrl,
       ],
-      { timeout: 57000, maxBuffer: 1024 * 1024 }, // Locked timeout chain: C yt-dlp 57s < B worker fetch 58s < D forward 65s < A per-attempt 65s
+      { timeout: YTDLP_ATTEMPT_TIMEOUT_MS, maxBuffer: 1024 * 1024 },
       (err, stdout, stderr) => {
         if (err) {
-          reject(new Error(String(stderr || err.message || err).trim().slice(0, 1200)));
+          reject(new Error(String(stderr || err.message || err).trim().slice(0, YTDLP_MAX_ERROR_DETAIL)));
           return;
         }
-        const url = String(stdout).trim().split("\n").filter(Boolean)[0] || "";
-        resolve(url);
+        resolve(String(stdout || ""));
       }
     );
   });
+}
+
+function parseResolvedUrls(stdout) {
+  return String(stdout || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => /^https?:\/\//i.test(line));
+}
+
+function isLikelyWebReadyUrl(candidateUrl, profileName) {
+  try {
+    const parsed = new URL(candidateUrl);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+      return false;
+    }
+
+    const decodedMime = decodeURIComponent(parsed.searchParams.get("mime") || "").toLowerCase();
+    if (decodedMime.includes("video/webm") || decodedMime.includes("audio/webm")) {
+      return false;
+    }
+
+    const isM3u8 = /\.m3u8($|\?)/i.test(parsed.pathname);
+    if (isM3u8) {
+      return profileName === "hls_fallback";
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function runYtDlp(inputUrl) {
+  const failures = [];
+
+  for (const profile of YTDLP_FORMAT_PROFILES) {
+    try {
+      const stdout = await runYtDlpWithProfile(inputUrl, profile);
+      const urls = parseResolvedUrls(stdout);
+      if (urls.length !== 1) {
+        failures.push(`${profile.name}:expected_single_url:${urls.length}`);
+        continue;
+      }
+
+      const selectedUrl = urls[0].replace(/^http:\/\//i, "https://");
+      if (!isLikelyWebReadyUrl(selectedUrl, profile.name)) {
+        failures.push(`${profile.name}:non_web_ready`);
+        continue;
+      }
+
+      return {
+        url: selectedUrl,
+        profile: profile.name
+      };
+    } catch (error) {
+      failures.push(`${profile.name}:${String(error && error.message ? error.message : error).slice(0, 180)}`);
+    }
+  }
+
+  throw new Error(`yt-dlp could not resolve a web-ready url (${failures.join(" | ").slice(0, YTDLP_MAX_ERROR_DETAIL)})`);
 }
 
 function runSelfTest() {
@@ -647,7 +722,8 @@ async function handler(req, res) {
     await incrementHourlyRecord(1, 0);
     const t0 = Date.now();
     try {
-      const directUrl = await runYtDlp(inputUrl);
+      const resolved = await runYtDlp(inputUrl);
+      const directUrl = resolved.url;
       const durationMs = Date.now() - t0;
       totalDurationMs += durationMs;
       lastResolve = { timestamp: new Date().toISOString(), ok: true, durationMs };
@@ -681,7 +757,7 @@ async function handler(req, res) {
       res.statusCode = 200;
       res.setHeader("Cache-Control", "no-store");
       res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify({ url: directUrl, worker_id: WORKER_ID }));
+      res.end(JSON.stringify({ url: directUrl, worker_id: WORKER_ID, profile: resolved.profile }));
     } catch (e) {
       const durationMs = Date.now() - t0;
       totalDurationMs += durationMs;
