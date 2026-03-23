@@ -230,7 +230,7 @@ function parseResolvedUrls(stdout) {
 function isLikelyWebReadyUrl(candidateUrl, profileName) {
   try {
     const parsed = new URL(candidateUrl);
-    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    if (parsed.protocol !== "https:") {
       return false;
     }
 
@@ -239,12 +239,16 @@ function isLikelyWebReadyUrl(candidateUrl, profileName) {
       return false;
     }
 
-    const isM3u8 = /\.m3u8($|\?)/i.test(parsed.pathname);
-    if (isM3u8) {
-      return profileName === "hls_fallback";
+    const pathname = parsed.pathname.toLowerCase();
+    if (pathname.endsWith(".m3u8") || pathname.endsWith(".webm")) {
+      return false;
     }
 
-    return true;
+    if (decodedMime) {
+      return decodedMime.includes("video/mp4") || decodedMime.includes("audio/mp4");
+    }
+
+    return pathname.endsWith(".mp4");
   } catch {
     return false;
   }
@@ -798,3 +802,4 @@ async function handler(req, res) {
 }
 
 module.exports = handler;
+module.exports.isLikelyWebReadyUrl = isLikelyWebReadyUrl;
